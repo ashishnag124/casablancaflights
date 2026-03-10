@@ -209,7 +209,7 @@
         return;
       }
       try {
-        const res = await fetch(`/.netlify/functions/flight?ident=${encodeURIComponent(callsign)}`);
+        const res = await fetch(`/api/flight?ident=${encodeURIComponent(callsign)}`);
         if (!res.ok) throw new Error(`FA ${res.status}`);
         const data = await res.json();
         const f = (data.flights || [])[0] || null;
@@ -264,7 +264,7 @@
     // ── Fetch & render ────────────────────────────────────────────────────────
     async function fetchFlights() {
       try {
-        const res = await fetch('/.netlify/functions/flights');
+        const res = await fetch(`/api/flights?lat=${CENTER[0]}&lon=${CENTER[1]}&nm=25`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
 
@@ -317,7 +317,7 @@
                 .setContent(enrichedPopup(m._faState, faCache.get(cs) ?? null));
               pop.openOn(map);
               if (!faCache.has(cs)) {
-                fetch(`/.netlify/functions/flight?ident=${encodeURIComponent(cs)}`)
+                fetch(`/api/flight?ident=${encodeURIComponent(cs)}`)
                   .then(r => r.ok ? r.json() : Promise.reject(r.status))
                   .then(data => {
                     const flights = data.flights || [];
