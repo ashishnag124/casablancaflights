@@ -1,0 +1,7 @@
+[build]
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/flight/:ident"
+  to = "/.netlify/functions/flight?ident=:ident"
+  status = 200
