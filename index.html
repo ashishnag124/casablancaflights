@@ -215,7 +215,7 @@
         return;
       }
       try {
-        const res = await fetch(`/api/flight/${encodeURIComponent(callsign)}`);
+        const res = await fetch(`/.netlify/functions/flight?ident=${encodeURIComponent(callsign)}`);
         if (!res.ok) throw new Error(`FA ${res.status}`);
         const data = await res.json();
         const f = (data.flights || [])[0] || null;
