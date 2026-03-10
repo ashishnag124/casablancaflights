@@ -311,12 +311,7 @@
             m.setLatLng(latlng);
             m.setIcon(icon);
             m.setTooltipContent(tooltipContent);
-            // Store latest state on marker for enrichedPopup to access
             m._faState = s;
-            if (m.isPopupOpen()) {
-              const cached = faCache.get(callsign);
-              m.getPopup().setContent(enrichedPopup(s, cached ?? null));
-            }
           } else {
             const m = L.marker(latlng, { icon }).addTo(map);
             m._faState = s;
@@ -326,12 +321,22 @@
               className: 'plane-tooltip',
               offset: [0, -20],
             });
-            // Show basic popup immediately; enrich with FlightAware on click
-            m.bindPopup(() => enrichedPopup(m._faState, faCache.get(callsign) ?? null), { maxWidth: 280 });
-            m.on('popupopen', () => {
-              const pop = m.getPopup();
-              pop._source = m._faState;
-              fetchFlightDetails(callsign, pop);
+            m.on('click', function() {
+              const cs = (m._faState[F.CALLSIGN] || '').trim() || m._faState[F.ICAO]?.toUpperCase() || '?';
+              const pop = L.popup({ maxWidth: 280, autoPan: false })
+                .setLatLng(m.getLatLng())
+                .setContent(enrichedPopup(m._faState, faCache.get(cs) ?? null));
+              pop.openOn(map);
+              if (!faCache.has(cs)) {
+                fetch(`/.netlify/functions/flight?ident=${encodeURIComponent(cs)}`)
+                  .then(r => r.ok ? r.json() : Promise.reject(r.status))
+                  .then(data => {
+                    const f = (data.flights || [])[0] || null;
+                    faCache.set(cs, f);
+                    if (pop.isOpen()) pop.setContent(enrichedPopup(m._faState, f));
+                  })
+                  .catch(err => console.warn('FA error:', err));
+              }
             });
             markers.set(id, m);
           }
