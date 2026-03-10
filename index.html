@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+  <title>Flights Overhead</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+    #map { width: 100%; height: 100dvh; }
+
+    /* Status bar */
+    #status {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      background: rgba(15, 15, 30, 0.75);
+      color: #cbd5e1;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 12px;
+      padding: 7px 12px;
+      border-radius: 10px;
+      z-index: 1000;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,0.08);
+      line-height: 1.4;
+    }
+    #status .count { font-weight: 700; color: #7dd3fc; }
+
+    /* Legend */
+    #legend {
+      position: fixed;
+      bottom: 16px;
+      left: 16px;
+      background: rgba(15, 15, 30, 0.75);
+      color: #cbd5e1;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 11px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      z-index: 1000;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,0.08);
+      line-height: 1.8;
+    }
+    .legend-dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+
+    /* Plane icon */
+    .plane-icon { display: flex; align-items: center; justify-content: center; }
+
+    /* Leaflet popup */
+    .leaflet-popup-content-wrapper {
+      border-radius: 12px;
+      box-shadow: 0 6px 30px rgba(0,0,0,0.25);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      border: 1px solid rgba(0,0,0,0.06);
+    }
+    .leaflet-popup-content { margin: 14px 16px; min-width: 195px; }
+    .leaflet-popup-tip-container { display: block; }
+
+    .popup-flight {
+      font-size: 19px;
+      font-weight: 800;
+      color: #0f172a;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+    }
+    .popup-aircraft {
+      font-size: 12px;
+      color: #64748b;
+      margin-bottom: 12px;
+      font-weight: 500;
+    }
+    .popup-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 10px;
+    }
+    .popup-item { display: flex; flex-direction: column; gap: 1px; }
+    .popup-label {
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.9px;
+      color: #94a3b8;
+      font-weight: 700;
+    }
+    .popup-value {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1e293b;
+    }
+    .popup-operator {
+      grid-column: 1 / -1;
+      margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px solid #f1f5f9;
+      font-size: 12px;
+      color: #475569;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="status">Connecting...</div>
+  <div id="legend">
+    <div><span class="legend-dot" style="background:#f59e0b"></span>Below 5,000 ft</div>
+    <div><span class="legend-dot" style="background:#38bdf8"></span>5,000 – 15,000 ft</div>
+    <div><span class="legend-dot" style="background:#818cf8"></span>Above 15,000 ft</div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // ── Config ────────────────────────────────────────────────────────────────
+    const CENTER     = [37.438264, -122.183802];
+    const RADIUS_NM  = 25;   // nautical miles radius to fetch
+    const REFRESH_MS = 15000;
+
+    // ── Map ───────────────────────────────────────────────────────────────────
+    const map = L.map('map', {
+      center: CENTER,
+      zoom: 10,
+      dragging: false,
+      scrollWheelZoom: true,
+      touchZoom: true,
+      doubleClickZoom: false,
+      zoomControl: true,
+    });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 18,
+    }).addTo(map);
+
+    // Home marker
+    L.circleMarker(CENTER, {
+      radius: 7,
+      color: '#ef4444',
+      fillColor: '#ef4444',
+      fillOpacity: 0.85,
+      weight: 2,
+    }).addTo(map).bindTooltip('📍 Home', { permanent: false, direction: 'top' });
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function altColor(alt) {
+      if (typeof alt !== 'number') return '#94a3b8';
+      if (alt < 5000)  return '#f59e0b';
+      if (alt < 15000) return '#38bdf8';
+      return '#818cf8';
+    }
+
+    function planeSvg(heading, color) {
+      // Airplane pointing upward (north = 0°), rotated clockwise by heading
+      return `<div class="plane-icon" style="transform:rotate(${heading}deg);width:28px;height:28px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="28" height="28">
+          <path d="M50 6 L57 40 L92 53 L92 62 L57 52 L61 82 L72 88 L72 94 L50 87 L28 94 L28 88 L39 82 L43 52 L8 62 L8 53 L43 40 Z"
+                fill="${color}" stroke="white" stroke-width="3.5" stroke-linejoin="round"/>
+        </svg>
+      </div>`;
+    }
+
+    function fmt(val, suffix = '') {
+      return (val != null && val !== '') ? `${val}${suffix}` : '—';
+    }
+
+    function fmtAlt(alt) {
+      if (alt === 'ground') return 'Ground';
+      if (typeof alt !== 'number') return '—';
+      return `${Math.round(alt).toLocaleString()} ft`;
+    }
+
+    function fmtHeading(track) {
+      if (track == null) return '—';
+      const dirs = ['N','NE','E','SE','S','SW','W','NW'];
+      return `${Math.round(track)}° ${dirs[Math.round(track / 45) % 8]}`;
+    }
+
+    function popupHtml(ac) {
+      const flight   = (ac.flight || '').trim() || ac.hex?.toUpperCase() || 'Unknown';
+      const typeParts = [ac.t, ac.r].filter(Boolean);
+      const aircraft  = typeParts.length ? typeParts.join('  ·  ') : 'Aircraft details unavailable';
+      const operator  = ac.ownOp ? `<div class="popup-operator">${ac.ownOp}</div>` : '';
+      return `
+        <div class="popup-flight">${flight}</div>
+        <div class="popup-aircraft">${aircraft}</div>
+        <div class="popup-grid">
+          <div class="popup-item">
+            <span class="popup-label">Altitude</span>
+            <span class="popup-value">${fmtAlt(ac.alt_baro)}</span>
+          </div>
+          <div class="popup-item">
+            <span class="popup-label">Speed</span>
+            <span class="popup-value">${fmt(ac.gs ? Math.round(ac.gs) : null, ' kts')}</span>
+          </div>
+          <div class="popup-item">
+            <span class="popup-label">Heading</span>
+            <span class="popup-value">${fmtHeading(ac.track)}</span>
+          </div>
+          <div class="popup-item">
+            <span class="popup-label">Squawk</span>
+            <span class="popup-value">${fmt(ac.squawk)}</span>
+          </div>
+          ${operator}
+        </div>`;
+    }
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    const markers   = new Map(); // icao → L.marker
+    const statusEl  = document.getElementById('status');
+
+    // ── Fetch & render ────────────────────────────────────────────────────────
+    async function fetchFlights() {
+      try {
+        const res = await fetch(
+          `https://api.adsb.lol/v2/lat/${CENTER[0]}/lon/${CENTER[1]}/dist/${RADIUS_NM}`
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        const aircraft = (data.ac || []).filter(
+          ac => ac.lat != null && ac.lon != null && ac.alt_baro !== 'ground'
+        );
+
+        const seen = new Set();
+
+        for (const ac of aircraft) {
+          const id = ac.hex;
+          if (!id) continue;
+          seen.add(id);
+
+          const heading = ac.track ?? 0;
+          const color   = altColor(ac.alt_baro);
+          const latlng  = [ac.lat, ac.lon];
+          const icon    = L.divIcon({
+            className: '',
+            html: planeSvg(heading, color),
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+            popupAnchor: [0, -16],
+          });
+
+          if (markers.has(id)) {
+            const m = markers.get(id);
+            m.setLatLng(latlng);
+            m.setIcon(icon);
+            if (m.isPopupOpen()) m.getPopup().setContent(popupHtml(ac));
+            else m.bindPopup(popupHtml(ac), { maxWidth: 260 });
+          } else {
+            const m = L.marker(latlng, { icon }).addTo(map);
+            m.bindPopup(popupHtml(ac), { maxWidth: 260 });
+            markers.set(id, m);
+          }
+        }
+
+        // Remove planes that left the area
+        for (const [id, m] of markers) {
+          if (!seen.has(id)) { m.remove(); markers.delete(id); }
+        }
+
+        const time = new Date().toLocaleTimeString([], {
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+        statusEl.innerHTML =
+          `<span class="count">${aircraft.length}</span> plane${aircraft.length !== 1 ? 's' : ''} overhead &nbsp;·&nbsp; ${time}`;
+
+      } catch (err) {
+        console.error('Fetch error:', err);
+        statusEl.textContent = 'Connection error — retrying…';
+      }
+    }
+
+    fetchFlights();
+    setInterval(fetchFlights, REFRESH_MS);
+  </script>
+</body>
+</html>
