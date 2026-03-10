@@ -57,6 +57,23 @@
     /* Plane icon */
     .plane-icon { display: flex; align-items: center; justify-content: center; }
 
+    /* Persistent plane tooltip */
+    .plane-tooltip {
+      background: rgba(15, 15, 30, 0.82);
+      border: none !important;
+      border-radius: 5px;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 7px;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      line-height: 1.5;
+      text-align: center;
+    }
+    .plane-tooltip::before { display: none !important; } /* hide arrow */
+
     /* Leaflet popup */
     .leaflet-popup-content-wrapper {
       border-radius: 12px;
@@ -98,13 +115,12 @@
       font-weight: 600;
       color: #1e293b;
     }
-    .popup-operator {
-      grid-column: 1 / -1;
-      margin-top: 4px;
-      padding-top: 8px;
-      border-top: 1px solid #f1f5f9;
-      font-size: 12px;
-      color: #475569;
+    .popup-route {
+      font-size: 15px;
+      font-weight: 700;
+      color: #2563eb;
+      margin-bottom: 2px;
+      letter-spacing: 0.3px;
     }
   </style>
 </head>
@@ -132,7 +148,7 @@
     // ── Map ───────────────────────────────────────────────────────────────────
     const map = L.map('map', {
       center: CENTER,
-      zoom: 10,
+      zoom: 11,
       dragging: false,
       scrollWheelZoom: true,
       touchZoom: true,
@@ -140,9 +156,10 @@
       zoomControl: true,
     });
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-      maxZoom: 18,
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      subdomains: 'abcd',
+      maxZoom: 19,
     }).addTo(map);
 
     // Home marker
@@ -166,8 +183,8 @@
     }
 
     function planeSvg(heading, color) {
-      return `<div class="plane-icon" style="transform:rotate(${heading}deg);width:28px;height:28px;">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="28" height="28">
+      return `<div class="plane-icon" style="transform:rotate(${heading}deg);width:36px;height:36px;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="36" height="36">
           <path d="M50 6 L57 40 L92 53 L92 62 L57 52 L61 82 L72 88 L72 94 L50 87 L28 94 L28 88 L39 82 L43 52 L8 62 L8 53 L43 40 Z"
                 fill="${color}" stroke="white" stroke-width="3.5" stroke-linejoin="round"/>
         </svg>
@@ -185,12 +202,47 @@
       return `${Math.round(track)}° ${dirs[Math.round(track / 45) % 8]}`;
     }
 
-    function popupHtml(s, altFt, kts) {
-      const callsign = (s[F.CALLSIGN] || '').trim() || s[F.ICAO]?.toUpperCase() || 'Unknown';
-      const country  = s[F.COUNTRY] || '—';
+
+
+    // ── FlightAware ───────────────────────────────────────────────────────────
+    // API key is kept server-side in the Netlify function (netlify/functions/flight.js)
+    const faCache  = new Map(); // callsign → flight data (cached to avoid repeat API calls)
+
+    async function fetchFlightDetails(callsign, popup) {
+      // Return cached result immediately without an API call
+      if (faCache.has(callsign)) {
+        popup.setContent(enrichedPopup(popup._source, faCache.get(callsign)));
+        return;
+      }
+      try {
+        const res = await fetch(`/api/flight/${encodeURIComponent(callsign)}`);
+        if (!res.ok) throw new Error(`FA ${res.status}`);
+        const data = await res.json();
+        const f = (data.flights || [])[0] || null;
+        faCache.set(callsign, f);
+        if (popup.isOpen()) popup.setContent(enrichedPopup(popup._source, f));
+      } catch (err) {
+        console.warn('FlightAware error:', err);
+        // Leave popup as-is with the OpenSky data
+      }
+    }
+
+    function enrichedPopup(s, f) {
+      const callsign = (s[F.CALLSIGN] || '').trim() || s[F.ICAO]?.toUpperCase() || '?';
+      const altFt    = mToFt(s[F.ALT_M]);
+      const kts      = msToKts(s[F.VEL_MS]);
+
+      const route = f
+        ? `${f.origin?.code_iata || f.origin?.code_icao || '?'} → ${f.destination?.code_iata || f.destination?.code_icao || '?'}`
+        : null;
+      const airline  = f?.operator_iata || f?.operator || null;
+      const acType   = f?.aircraft_type || null;
+      const status   = f?.status || null;
+
       return `
         <div class="popup-flight">${callsign}</div>
-        <div class="popup-aircraft">${country}</div>
+        ${route  ? `<div class="popup-route">${route}</div>` : ''}
+        ${airline || acType ? `<div class="popup-aircraft">${[airline, acType].filter(Boolean).join(' · ')}</div>` : ''}
         <div class="popup-grid">
           <div class="popup-item">
             <span class="popup-label">Altitude</span>
@@ -205,8 +257,8 @@
             <span class="popup-value">${fmtHeading(s[F.TRACK])}</span>
           </div>
           <div class="popup-item">
-            <span class="popup-label">Squawk</span>
-            <span class="popup-value">${s[F.SQUAWK] || '—'}</span>
+            <span class="popup-label">Status</span>
+            <span class="popup-value">${status || s[F.SQUAWK] || '—'}</span>
           </div>
         </div>`;
     }
@@ -235,6 +287,7 @@
           if (!id) continue;
           seen.add(id);
 
+          const callsign = (s[F.CALLSIGN] || '').trim() || s[F.ICAO]?.toUpperCase() || '?';
           const altFt   = mToFt(s[F.ALT_M]);
           const kts     = msToKts(s[F.VEL_MS]);
           const heading = s[F.TRACK] ?? 0;
@@ -243,20 +296,42 @@
           const icon    = L.divIcon({
             className: '',
             html: planeSvg(heading, color),
-            iconSize: [28, 28],
-            iconAnchor: [14, 14],
-            popupAnchor: [0, -16],
+            iconSize: [36, 36],
+            iconAnchor: [18, 18],
+            popupAnchor: [0, -20],
           });
+
+          const tooltipContent = altFt != null
+            ? `${callsign}<br><span style="font-weight:400;opacity:0.8">${altFt.toLocaleString()} ft</span>`
+            : callsign;
 
           if (markers.has(id)) {
             const m = markers.get(id);
             m.setLatLng(latlng);
             m.setIcon(icon);
-            if (m.isPopupOpen()) m.getPopup().setContent(popupHtml(s, altFt, kts));
-            else m.bindPopup(popupHtml(s, altFt, kts), { maxWidth: 260 });
+            m.setTooltipContent(tooltipContent);
+            // Store latest state on marker for enrichedPopup to access
+            m._faState = s;
+            if (m.isPopupOpen()) {
+              const cached = faCache.get(callsign);
+              m.getPopup().setContent(enrichedPopup(s, cached ?? null));
+            }
           } else {
             const m = L.marker(latlng, { icon }).addTo(map);
-            m.bindPopup(popupHtml(s, altFt, kts), { maxWidth: 260 });
+            m._faState = s;
+            m.bindTooltip(tooltipContent, {
+              permanent: true,
+              direction: 'top',
+              className: 'plane-tooltip',
+              offset: [0, -20],
+            });
+            // Show basic popup immediately; enrich with FlightAware on click
+            m.bindPopup(() => enrichedPopup(m._faState, faCache.get(callsign) ?? null), { maxWidth: 280 });
+            m.on('popupopen', () => {
+              const pop = m.getPopup();
+              pop._source = m._faState;
+              fetchFlightDetails(callsign, pop);
+            });
             markers.set(id, m);
           }
         }
