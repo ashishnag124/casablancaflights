@@ -147,8 +147,9 @@
     const F = { ICAO:0, CALLSIGN:1, COUNTRY:2, LON:5, LAT:6, ALT_M:7, ON_GROUND:8, VEL_MS:9, TRACK:10, SQUAWK:14 };
 
     // ── Map ───────────────────────────────────────────────────────────────────
+    const isPortrait = window.innerHeight > window.innerWidth;
     const map = L.map('map', {
-      center: [37.52, -122.15],
+      center: isPortrait ? [37.46, -122.15] : [37.52, -122.15],
       zoom: 12,
       scrollWheelZoom: true,
       touchZoom: true,
