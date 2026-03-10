@@ -71,6 +71,7 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.3);
       line-height: 1.5;
       text-align: center;
+      pointer-events: none;
     }
     .plane-tooltip::before { display: none !important; } /* hide arrow */
 
@@ -147,8 +148,8 @@
 
     // ── Map ───────────────────────────────────────────────────────────────────
     const map = L.map('map', {
-      center: CENTER,
-      zoom: 11,
+      center: [37.52, -122.15],
+      zoom: 12,
       dragging: false,
       scrollWheelZoom: true,
       touchZoom: true,
