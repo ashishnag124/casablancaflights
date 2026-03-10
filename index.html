@@ -331,7 +331,10 @@
                 fetch(`/.netlify/functions/flight?ident=${encodeURIComponent(cs)}`)
                   .then(r => r.ok ? r.json() : Promise.reject(r.status))
                   .then(data => {
-                    const f = (data.flights || [])[0] || null;
+                    const flights = data.flights || [];
+                    const f = flights.find(f => f.status && /en route|departed/i.test(f.status))
+                           || flights.find(f => f.progress_percent > 0 && f.progress_percent < 100)
+                           || flights[0] || null;
                     faCache.set(cs, f);
                     if (pop.isOpen()) pop.setContent(enrichedPopup(m._faState, f));
                   })
