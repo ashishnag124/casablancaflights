@@ -121,8 +121,13 @@
   <script>
     // ── Config ────────────────────────────────────────────────────────────────
     const CENTER     = [37.438264, -122.183802];
-    const RADIUS_NM  = 25;   // nautical miles radius to fetch
-    const REFRESH_MS = 15000;
+    const REFRESH_MS = 30000; // 30s — respects OpenSky anonymous rate limits
+
+    // Bounding box ~25 nautical miles around CENTER
+    const BBOX = { lamin: 37.022, lamax: 37.854, lomin: -122.707, lomax: -121.661 };
+
+    // OpenSky state vector indices
+    const F = { ICAO:0, CALLSIGN:1, COUNTRY:2, LON:5, LAT:6, ALT_M:7, ON_GROUND:8, VEL_MS:9, TRACK:10, SQUAWK:14 };
 
     // ── Map ───────────────────────────────────────────────────────────────────
     const map = L.map('map', {
@@ -150,15 +155,17 @@
     }).addTo(map).bindTooltip('📍 Home', { permanent: false, direction: 'top' });
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-    function altColor(alt) {
-      if (typeof alt !== 'number') return '#94a3b8';
-      if (alt < 5000)  return '#f59e0b';
-      if (alt < 15000) return '#38bdf8';
+    const mToFt   = m  => m  != null ? Math.round(m  * 3.28084) : null;
+    const msToKts = ms => ms != null ? Math.round(ms * 1.94384) : null;
+
+    function altColor(altFt) {
+      if (altFt == null) return '#94a3b8';
+      if (altFt < 5000)  return '#f59e0b';
+      if (altFt < 15000) return '#38bdf8';
       return '#818cf8';
     }
 
     function planeSvg(heading, color) {
-      // Airplane pointing upward (north = 0°), rotated clockwise by heading
       return `<div class="plane-icon" style="transform:rotate(${heading}deg);width:28px;height:28px;">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="28" height="28">
           <path d="M50 6 L57 40 L92 53 L92 62 L57 52 L61 82 L72 88 L72 94 L50 87 L28 94 L28 88 L39 82 L43 52 L8 62 L8 53 L43 40 Z"
@@ -167,14 +174,9 @@
       </div>`;
     }
 
-    function fmt(val, suffix = '') {
-      return (val != null && val !== '') ? `${val}${suffix}` : '—';
-    }
-
-    function fmtAlt(alt) {
-      if (alt === 'ground') return 'Ground';
-      if (typeof alt !== 'number') return '—';
-      return `${Math.round(alt).toLocaleString()} ft`;
+    function fmtAlt(altFt) {
+      if (altFt == null) return '—';
+      return `${altFt.toLocaleString()} ft`;
     }
 
     function fmtHeading(track) {
@@ -183,62 +185,61 @@
       return `${Math.round(track)}° ${dirs[Math.round(track / 45) % 8]}`;
     }
 
-    function popupHtml(ac) {
-      const flight   = (ac.flight || '').trim() || ac.hex?.toUpperCase() || 'Unknown';
-      const typeParts = [ac.t, ac.r].filter(Boolean);
-      const aircraft  = typeParts.length ? typeParts.join('  ·  ') : 'Aircraft details unavailable';
-      const operator  = ac.ownOp ? `<div class="popup-operator">${ac.ownOp}</div>` : '';
+    function popupHtml(s, altFt, kts) {
+      const callsign = (s[F.CALLSIGN] || '').trim() || s[F.ICAO]?.toUpperCase() || 'Unknown';
+      const country  = s[F.COUNTRY] || '—';
       return `
-        <div class="popup-flight">${flight}</div>
-        <div class="popup-aircraft">${aircraft}</div>
+        <div class="popup-flight">${callsign}</div>
+        <div class="popup-aircraft">${country}</div>
         <div class="popup-grid">
           <div class="popup-item">
             <span class="popup-label">Altitude</span>
-            <span class="popup-value">${fmtAlt(ac.alt_baro)}</span>
+            <span class="popup-value">${fmtAlt(altFt)}</span>
           </div>
           <div class="popup-item">
             <span class="popup-label">Speed</span>
-            <span class="popup-value">${fmt(ac.gs ? Math.round(ac.gs) : null, ' kts')}</span>
+            <span class="popup-value">${kts != null ? kts + ' kts' : '—'}</span>
           </div>
           <div class="popup-item">
             <span class="popup-label">Heading</span>
-            <span class="popup-value">${fmtHeading(ac.track)}</span>
+            <span class="popup-value">${fmtHeading(s[F.TRACK])}</span>
           </div>
           <div class="popup-item">
             <span class="popup-label">Squawk</span>
-            <span class="popup-value">${fmt(ac.squawk)}</span>
+            <span class="popup-value">${s[F.SQUAWK] || '—'}</span>
           </div>
-          ${operator}
         </div>`;
     }
 
     // ── State ─────────────────────────────────────────────────────────────────
-    const markers   = new Map(); // icao → L.marker
-    const statusEl  = document.getElementById('status');
+    const markers  = new Map(); // icao → L.marker
+    const statusEl = document.getElementById('status');
 
     // ── Fetch & render ────────────────────────────────────────────────────────
     async function fetchFlights() {
       try {
-        const res = await fetch(
-          `https://api.adsb.lol/v2/lat/${CENTER[0]}/lon/${CENTER[1]}/dist/${RADIUS_NM}`
-        );
+        const url = `https://opensky-network.org/api/states/all`
+          + `?lamin=${BBOX.lamin}&lomin=${BBOX.lomin}&lamax=${BBOX.lamax}&lomax=${BBOX.lomax}`;
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
 
-        const aircraft = (data.ac || []).filter(
-          ac => ac.lat != null && ac.lon != null && ac.alt_baro !== 'ground'
+        const states = (data.states || []).filter(
+          s => s[F.LAT] != null && s[F.LON] != null && s[F.ON_GROUND] === false
         );
 
         const seen = new Set();
 
-        for (const ac of aircraft) {
-          const id = ac.hex;
+        for (const s of states) {
+          const id    = s[F.ICAO];
           if (!id) continue;
           seen.add(id);
 
-          const heading = ac.track ?? 0;
-          const color   = altColor(ac.alt_baro);
-          const latlng  = [ac.lat, ac.lon];
+          const altFt   = mToFt(s[F.ALT_M]);
+          const kts     = msToKts(s[F.VEL_MS]);
+          const heading = s[F.TRACK] ?? 0;
+          const color   = altColor(altFt);
+          const latlng  = [s[F.LAT], s[F.LON]];
           const icon    = L.divIcon({
             className: '',
             html: planeSvg(heading, color),
@@ -251,11 +252,11 @@
             const m = markers.get(id);
             m.setLatLng(latlng);
             m.setIcon(icon);
-            if (m.isPopupOpen()) m.getPopup().setContent(popupHtml(ac));
-            else m.bindPopup(popupHtml(ac), { maxWidth: 260 });
+            if (m.isPopupOpen()) m.getPopup().setContent(popupHtml(s, altFt, kts));
+            else m.bindPopup(popupHtml(s, altFt, kts), { maxWidth: 260 });
           } else {
             const m = L.marker(latlng, { icon }).addTo(map);
-            m.bindPopup(popupHtml(ac), { maxWidth: 260 });
+            m.bindPopup(popupHtml(s, altFt, kts), { maxWidth: 260 });
             markers.set(id, m);
           }
         }
@@ -269,7 +270,7 @@
           hour: '2-digit', minute: '2-digit', second: '2-digit'
         });
         statusEl.innerHTML =
-          `<span class="count">${aircraft.length}</span> plane${aircraft.length !== 1 ? 's' : ''} overhead &nbsp;·&nbsp; ${time}`;
+          `<span class="count">${states.length}</span> plane${states.length !== 1 ? 's' : ''} overhead &nbsp;·&nbsp; ${time}`;
 
       } catch (err) {
         console.error('Fetch error:', err);
