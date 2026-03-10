@@ -21,6 +21,7 @@ app.get('/api/flights', async (req, res) => {
 app.get('/api/flight', async (req, res) => {
   const { ident } = req.query;
   if (!ident) return res.status(400).json({ error: 'Missing ident' });
+  console.log('FA_KEY set:', !!process.env.FA_KEY, '| length:', process.env.FA_KEY?.length ?? 0);
   try {
     const r = await fetch(
       `https://aeroapi.flightaware.com/aeroapi/flights/${encodeURIComponent(ident)}`,
