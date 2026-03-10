@@ -150,7 +150,7 @@
     const isPortrait = window.innerHeight > window.innerWidth;
     const map = L.map('map', {
       center: isPortrait ? [37.46, -122.15] : [37.52, -122.15],
-      zoom: 12,
+      zoom: isPortrait ? 10 : 12,
       scrollWheelZoom: true,
       touchZoom: true,
       doubleClickZoom: false,
