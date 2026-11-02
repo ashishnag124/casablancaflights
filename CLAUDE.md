@@ -1,6 +1,6 @@
 # Flights Overhead (casablancaflights)
 
-Live map of planes flying near home, refreshed every 15s.
+Live map of planes flying near a chosen location, refreshed every 15s. It defaults to SFO airport, and visitors change the location with the address search box. Never put a personal home address back in the code; the site is public.
 
 - Live site: https://casablancaflights.ashishnag.com
 - Repo: https://github.com/ashishnag124/casablancaflights (branch `main`, public)
@@ -8,7 +8,7 @@ Live map of planes flying near home, refreshed every 15s.
 
 ## Files
 
-- `index.html`: the whole frontend (Leaflet 1.9.4 from unpkg, inline CSS and JS). Key constants are `CENTER` (home location) and `REFRESH_MS`, near the top of the script.
+- `index.html`: the whole frontend (Leaflet 1.9.4 from unpkg, inline CSS and JS). Key constants are `CENTER` (default SFO; the search box reassigns it) and `REFRESH_MS`, near the top of the script. Address autocomplete calls Photon (`photon.komoot.io`, free, no key) straight from the browser, debounced 300ms. A chosen location is written to the URL (`?lat=&lon=&place=`) with `history.replaceState`, so reloads keep it and links are shareable. The `place` text is shown with `textContent` because it comes from the URL.
 - `server.js`: Express server. It serves the static files and proxies two APIs:
   - `GET /api/flights?lat&lon&nm` → adsb.lol (free, no key). Gives the planes on the map.
   - `GET /api/flight?ident` → FlightAware AeroAPI. Gives route details in the popup. Needs the `FA_KEY` env var, which is set in Railway, not in the repo.
